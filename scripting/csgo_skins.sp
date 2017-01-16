@@ -4,39 +4,46 @@
 * Description:
 *   Changes player skin and appropriate arms on the fly without editing any configuration files.
 *
-* Version 1.2.3
+* Version 1.2.4
 * Changelog & more info at http://goo.gl/4nKhJ
+*
+* RIP Root
 */
+#pragma semicolon 1
 
 // ====[ INCLUDES ]==========================================================================
 #include <sdktools>
 #include <cstrike>
+#include <autoexecconfig>
 #undef REQUIRE_PLUGIN
 #tryinclude <updater>
 
+
+#pragma newdecls required
+
 // ====[ CONSTANTS ]=========================================================================
 #define PLUGIN_NAME     "CS:GO Skins Chooser"
-#define PLUGIN_VERSION  "1.2.3"
-#define UPDATE_URL      "https://raw.github.com/zadroot/CSGO_SkinsChooser/master/updater.txt"
+#define PLUGIN_VERSION  "1.2.4"
+// #define UPDATE_URL      "https://raw.github.com/zadroot/CSGO_SkinsChooser/master/updater.txt"
+#define UPDATE_URL      "https://raw.githubusercontent.com/Nobody-x/CSGO_SkinsChooser/master/updater.txt"
 #define MAX_SKINS_COUNT 72
-#define MAX_SKIN_LENGTH 41
 #define RANDOM_SKIN     -1
 
 // ====[ VARIABLES ]=========================================================================
-new	Handle:sc_enable     = INVALID_HANDLE,
-	Handle:sc_random     = INVALID_HANDLE,
-	Handle:sc_changetype = INVALID_HANDLE,
-	Handle:sc_admflag    = INVALID_HANDLE,
-	Handle:t_skins_menu  = INVALID_HANDLE,
-	Handle:ct_skins_menu = INVALID_HANDLE,
-	String:TerrorSkin[MAX_SKINS_COUNT][MAX_SKIN_LENGTH],
-	String:TerrorArms[MAX_SKINS_COUNT][MAX_SKIN_LENGTH],
-	String:CTerrorSkin[MAX_SKINS_COUNT][MAX_SKIN_LENGTH],
-	String:CTerrorArms[MAX_SKINS_COUNT][MAX_SKIN_LENGTH],
-	TSkins_Count, CTSkins_Count, Selected[MAXPLAYERS + 1] = {RANDOM_SKIN, ...};
+ConVar sc_enable     = null;
+ConVar sc_random     = null;
+ConVar sc_changetype = null;
+ConVar sc_admflag    = null;
+Menu t_skins_menu  = null;
+Menu ct_skins_menu = null;
+char TerrorSkin[MAX_SKINS_COUNT][PLATFORM_MAX_PATH];
+char TerrorArms[MAX_SKINS_COUNT][PLATFORM_MAX_PATH];
+char CTerrorSkin[MAX_SKINS_COUNT][PLATFORM_MAX_PATH];
+char CTerrorArms[MAX_SKINS_COUNT][PLATFORM_MAX_PATH];
+int TSkins_Count, CTSkins_Count, Selected[MAXPLAYERS + 1] = {RANDOM_SKIN, ...};
 
 // ====[ PLUGIN ]============================================================================
-public Plugin:myinfo =
+public Plugin myinfo =
 {
 	name        = PLUGIN_NAME,
 	author      = "Root",
@@ -50,14 +57,15 @@ public Plugin:myinfo =
  *
  * When the plugin starts up.
  * ------------------------------------------------------------------------------------------ */
-public OnPluginStart()
+public void OnPluginStart()
 {
+	AutoExecConfig_SetFile("plugin.csgo_skins");
 	// Create console variables
 	CreateConVar("sm_csgo_skins_version", PLUGIN_VERSION, PLUGIN_NAME, FCVAR_NOTIFY|FCVAR_DONTRECORD);
-	sc_enable     = CreateConVar("sm_csgo_skins_enable",  "1", "Whether or not enable CS:GO Skins Chooser plugin",                                   FCVAR_PLUGIN, true, 0.0, true, 1.0);
-	sc_random     = CreateConVar("sm_csgo_skins_random",  "1", "Whether or not randomly change models for all players on every respawn\n2 = Once",   FCVAR_PLUGIN, true, 0.0, true, 2.0);
-	sc_changetype = CreateConVar("sm_csgo_skins_change",  "0", "Determines when change selected player skin:\n0 = On next respawn\n1 = Immediately", FCVAR_PLUGIN, true, 0.0, true, 1.0);
-	sc_admflag    = CreateConVar("sm_csgo_skins_admflag", "",  "If flag is specified (a-z), only admins with that flag will able to use skins menu", FCVAR_PLUGIN);
+	sc_enable     = AutoExecConfig_CreateConVar("sm_csgo_skins_enable",  "1", "Whether or not enable CS:GO Skins Chooser plugin",                                   0, true, 0.0, true, 1.0);
+	sc_random     = AutoExecConfig_CreateConVar("sm_csgo_skins_random",  "1", "Whether or not randomly change models for all players on every respawn\n2 = Once",   0, true, 0.0, true, 2.0);
+	sc_changetype = AutoExecConfig_CreateConVar("sm_csgo_skins_change",  "0", "Determines when change selected player skin:\n0 = On next respawn\n1 = Immediately", 0, true, 0.0, true, 1.0);
+	sc_admflag    = AutoExecConfig_CreateConVar("sm_csgo_skins_admflag", "",  "If flag is specified (a-z), only admins with that flag will able to use skins menu", 0);
 
 	// Create/register client commands to setup player skins
 	RegConsoleCmd("sm_skin",  Command_SkinsMenu);
@@ -69,7 +77,7 @@ public OnPluginStart()
 	HookEvent("player_disconnect", OnPlayerEvents, EventHookMode_Post);
 
 	// Create and exec plugin's configuration file
-	AutoExecConfig(true, "csgo_skins");
+	AutoExecConfig_ExecuteFile();
 
 #if defined _updater_included
 	if (LibraryExists("updater"))
@@ -84,10 +92,10 @@ public OnPluginStart()
  *
  * When the map starts.
  * ------------------------------------------------------------------------------------------ */
-public OnMapStart()
+public void OnMapStart()
 {
 	// Declare string to load skin's config from sourcemod/configs folder
-	decl String:file[PLATFORM_MAX_PATH], String:curmap[PLATFORM_MAX_PATH];
+	char file[PLATFORM_MAX_PATH], curmap[PLATFORM_MAX_PATH];
 	GetCurrentMap(curmap, sizeof(curmap));
 
 	// Does current map string contains a "workshop" prefix at a start?
@@ -125,7 +133,7 @@ public OnMapStart()
  *
  * Called after a library is added that the current plugin references.
  * ------------------------------------------------------------------------------------------ */
-public OnLibraryAdded(const String:name[])
+public void OnLibraryAdded(const char[] name)
 {
 	// Updater
 	if (StrEqual(name, "updater"))
@@ -139,105 +147,106 @@ public OnLibraryAdded(const String:name[])
  *
  * Called when player spawns or disconnects from a server.
  * ------------------------------------------------------------------------------------------ */
-public OnPlayerEvents(Handle:event, const String:name[], bool:dontBroadcast)
+public void OnPlayerEvents(Event event, const char[] name, bool dontBroadcast)
 {
 	// Does plugin is enabled?
-	if (GetConVarBool(sc_enable))
+	if (!sc_enable.BoolValue)
+		return;
+
+	// Get real player index from event key
+	int client = GetClientOfUserId(event.GetInt("userid"));
+	int random = sc_random.IntValue;
+
+	// player_spawn event was fired
+	if (name[7] == 's')
 	{
-		// Get real player index from event key
-		new client = GetClientOfUserId(GetEventInt(event, "userid"));
-		new random = GetConVarInt(sc_random);
-
-		// player_spawn event was fired
-		if (name[7] == 's')
+		// Make sure player is valid and not controlling a bot
+		if (IsValidClient(client) && (random || !GetEntProp(client, Prop_Send, "m_bIsControllingBot")))
 		{
-			// Make sure player is valid and not controlling a bot
-			if (IsValidClient(client) && (random || !GetEntProp(client, Prop_Send, "m_bIsControllingBot")))
+			int team  = GetClientTeam(client);
+			int model = Selected[client];
+
+			// Get same random number for using same arms and skin
+			int trandom  = GetRandomInt(0, TSkins_Count  - 1);
+			int ctrandom = GetRandomInt(0, CTSkins_Count - 1);
+
+			// Change player skin to random only once
+			if (random == 2 && model == RANDOM_SKIN)
 			{
-				new team  = GetClientTeam(client);
-				new model = Selected[client];
+				// And assign random model
+				Selected[client] = (team == CS_TEAM_T ? trandom : ctrandom);
+			}
 
-				// Get same random number for using same arms and skin
-				new trandom  = GetRandomInt(0, TSkins_Count  - 1);
-				new ctrandom = GetRandomInt(0, CTSkins_Count - 1);
-
-				// Change player skin to random only once
-				if (random == 2 && model == RANDOM_SKIN)
+			// Set skin depends on client's team
+			switch (team)
+			{
+				case CS_TEAM_T: // Terrorists
 				{
-					// And assign random model
-					Selected[client] = (team == CS_TEAM_T ? trandom : ctrandom);
-				}
-
-				// Set skin depends on client's team
-				switch (team)
-				{
-					case CS_TEAM_T: // Terrorists
+					// If random model should be accepted, get random skin of all avalible skins
+					if (random == 1 && model == RANDOM_SKIN)
 					{
-						// If random model should be accepted, get random skin of all avalible skins
-						if (random == 1 && model == RANDOM_SKIN)
-						{
-							SetEntityModel(client, TerrorSkin[trandom]);
+						SetEntityModel(client, TerrorSkin[trandom]);
 
-							// Same random int
-							SetEntPropString(client, Prop_Send, "m_szArmsModel", TerrorArms[trandom]);
-						}
-						else if (RANDOM_SKIN < model < TSkins_Count)
-						{
-							SetEntityModel(client, TerrorSkin[model]);
-							SetEntPropString(client, Prop_Send, "m_szArmsModel", TerrorArms[model]);
-						}
+						// Same random int
+						SetEntPropString(client, Prop_Send, "m_szArmsModel", TerrorArms[trandom]);
 					}
-					case CS_TEAM_CT: // Counter-Terrorists
+					else if (RANDOM_SKIN < model < TSkins_Count)
 					{
-						// Also make sure that player havent chosen any skin yet
-						if (random == 1 && model == RANDOM_SKIN)
-						{
-							SetEntityModel(client, CTerrorSkin[ctrandom]);
-							SetEntPropString(client, Prop_Send, "m_szArmsModel", CTerrorArms[ctrandom]);
-						}
+						SetEntityModel(client, TerrorSkin[model]);
+						SetEntPropString(client, Prop_Send, "m_szArmsModel", TerrorArms[model]);
+					}
+				}
+				case CS_TEAM_CT: // Counter-Terrorists
+				{
+					// Also make sure that player havent chosen any skin yet
+					if (random == 1 && model == RANDOM_SKIN)
+					{
+						SetEntityModel(client, CTerrorSkin[ctrandom]);
+						SetEntPropString(client, Prop_Send, "m_szArmsModel", CTerrorArms[ctrandom]);
+					}
 
-						// Model index must be valid (more than map default and less than max)
-						else if (RANDOM_SKIN < model < CTSkins_Count)
-						{
-							// And set the model
-							SetEntityModel(client, CTerrorSkin[model]);
-							SetEntPropString(client, Prop_Send, "m_szArmsModel", CTerrorArms[model]);
-						}
+					// Model index must be valid (more than map default and less than max)
+					else if (RANDOM_SKIN < model < CTSkins_Count)
+					{
+						// And set the model
+						SetEntityModel(client, CTerrorSkin[model]);
+						SetEntPropString(client, Prop_Send, "m_szArmsModel", CTerrorArms[model]);
 					}
 				}
 			}
 		}
-		else Selected[client] = RANDOM_SKIN; // Reset skin on player_disconnect
 	}
+	else Selected[client] = RANDOM_SKIN; // Reset skin on player_disconnect
+
 }
 
 /* Command_SkinsMenu()
  *
  * Shows skin's menu to a player.
  * ------------------------------------------------------------------------------------------ */
-public Action:Command_SkinsMenu(client, args)
+public Action Command_SkinsMenu(int client, int args)
 {
-	if (GetConVarBool(sc_enable))
+	if (sc_enable.BoolValue)
 	{
 		// Once again make sure that client is valid
-		if (IsValidClient(client) && (IsPlayerAlive(client) || !GetConVarBool(sc_changetype)))
+		if (IsValidClient(client) && (IsPlayerAlive(client) || !sc_changetype.BoolValue))
 		{
 			// Get flag name from convar string and get client's access
-			decl String:admflag[AdminFlags_TOTAL], AdmFlag;
-			GetConVarString(sc_admflag, admflag, sizeof(admflag));
+			char sAdmflag[AdminFlags_TOTAL];
+			sc_admflag.GetString(sAdmflag, sizeof(sAdmflag));
 
 			// Converts a string of flag characters to a bit string
-			AdmFlag = ReadFlagString(admflag);
+			int iAdmFlag = ReadFlagString(sAdmflag);
 
 			// Check if player is having any access (including skins overrides)
-			if (AdmFlag == 0
-			||  AdmFlag != 0 && CheckCommandAccess(client, "csgo_skins_override", AdmFlag, true))
+			if (iAdmFlag == 0
+			||  iAdmFlag != 0 && CheckCommandAccess(client, "csgo_skins_override", iAdmFlag, true))
 			{
 				// Show individual skin menu depends on client's team
 				switch (GetClientTeam(client))
 				{
-					case CS_TEAM_T:  if (t_skins_menu  != INVALID_HANDLE) DisplayMenu(t_skins_menu,  client, MENU_TIME_FOREVER);
-					case CS_TEAM_CT: if (ct_skins_menu != INVALID_HANDLE) DisplayMenu(ct_skins_menu, client, MENU_TIME_FOREVER);
+					case CS_TEAM_T:  if (t_skins_menu  != null) t_skins_menu.Display(client, MENU_TIME_FOREVER);
+					case CS_TEAM_CT: if (ct_skins_menu != null) ct_skins_menu.Display(client, MENU_TIME_FOREVER);
 				}
 			}
 		}
@@ -251,26 +260,26 @@ public Action:Command_SkinsMenu(client, args)
  *
  * Menu to set player's skin.
  * ------------------------------------------------------------------------------------------ */
-public MenuHandler_ChooseSkin(Handle:menu, MenuAction:action, client, param)
+public int MenuHandler_ChooseSkin(Menu menu, MenuAction action, int client, int param)
 {
 	// Called when player pressed something in a menu
 	if (action == MenuAction_Select)
 	{
 		// Don't use any other value than 10, otherwise you may crash clients and a server
-		decl String:skin_id[10];
+		char skin_id[10];
 		GetMenuItem(menu, param, skin_id, sizeof(skin_id));
 
 		// Make sure we havent selected random skin
 		if (!StrEqual(skin_id, "Random"))
 		{
 			// Get skin number
-			new skin = StringToInt(skin_id, sizeof(skin_id));
+			int skin = StringToInt(skin_id, sizeof(skin_id));
 
 			// Correct. So lets save the selected skin
 			Selected[client] = skin;
 
 			// Set player model and arms immediately
-			if (GetConVarBool(sc_changetype))
+			if (sc_changetype.BoolValue)
 			{
 				// Depends on client team obviously
 				switch (GetClientTeam(client))
@@ -296,30 +305,31 @@ public MenuHandler_ChooseSkin(Handle:menu, MenuAction:action, client, param)
  *
  * Adds skins to a menu, makes limits for allowed skins
  * ------------------------------------------------------------------------------------------ */
-PrepareConfig(const String:file[])
+void PrepareConfig(const char[] file)
 {
 	// Creates a new KeyValues structure to setup player skins
-	new Handle:kv = CreateKeyValues("Skins");
+	KeyValues kv = new KeyValues("Skins");
 
 	// Convert given file to a KeyValues tree
-	FileToKeyValues(kv, file);
+	kv.ImportFromFile(file);
 
 	// Get 'Terrorists' section
-	if (KvJumpToKey(kv, "Terrorists"))
+	if (kv.JumpToKey("Terrorists"))
 	{
-		decl String:section[MAX_SKINS_COUNT], String:skin[MAX_SKINS_COUNT], String:arms[MAX_SKINS_COUNT], String:skin_id[3];
+		char section[MAX_SKINS_COUNT], skin[MAX_SKINS_COUNT], arms[MAX_SKINS_COUNT], skin_id[3];
 
 		// Sets the current position in the KeyValues tree to the first sub key
-		KvGotoFirstSubKey(kv);
+		if (!kv.GotoFirstSubKey())
+			SetFailState("Fatal error: Can't go to the first sub-key");
 
 		do
 		{
 			// Get current section name
-			KvGetSectionName(kv, section, sizeof(section));
+			kv.GetSectionName(section, sizeof(section));
 
 			// Also make sure we've got 'skin' and 'arms' sections
-			if (KvGetString(kv, "skin", skin, sizeof(skin))
-			&&  KvGetString(kv, "arms", arms, sizeof(arms)))
+			if (kv.GetString("skin", skin, sizeof(skin))
+			&&  kv.GetString("arms", arms, sizeof(arms)))
 			{
 				// Copy the full path of skin from config and save it
 				strcopy(TerrorSkin[TSkins_Count], sizeof(TerrorSkin[]), skin);
@@ -327,7 +337,7 @@ PrepareConfig(const String:file[])
 
 				Format(skin_id, sizeof(skin_id), "%d", TSkins_Count++);
 
-				AddMenuItem(t_skins_menu, skin_id, section);
+				t_skins_menu.AddItem(skin_id, section);
 
 				// Precache every model (before mapchange) to prevent client crashes
 				PrecacheModel(skin, true);
@@ -337,27 +347,28 @@ PrepareConfig(const String:file[])
 		}
 
 		// Because we need to process all keys
-		while (KvGotoNextKey(kv));
+		while (kv.GotoNextKey());
 	}
 	else SetFailState("Fatal error: Missing \"Terrorists\" section!");
 
 	// Get back to the top
-	KvRewind(kv);
+	kv.Rewind();
 
 	// Check CT config right now
-	if (KvJumpToKey(kv, "Counter-Terrorists"))
+	if (kv.JumpToKey("Counter-Terrorists"))
 	{
-		decl String:section[MAX_SKINS_COUNT], String:skin[MAX_SKINS_COUNT], String:arms[MAX_SKINS_COUNT], String:skin_id[3];
+		char section[MAX_SKINS_COUNT], skin[MAX_SKINS_COUNT], arms[MAX_SKINS_COUNT], skin_id[3];
 
-		KvGotoFirstSubKey(kv);
+		if (!kv.GotoFirstSubKey())
+			SetFailState("Fatal error: Can't go to the first sub-key");
 
 		// Lets begin
 		do
 		{
-			KvGetSectionName(kv, section, sizeof(section));
+			kv.GetSectionName(section, sizeof(section));
 
-			if (KvGetString(kv, "skin", skin, sizeof(skin))
-			&&  KvGetString(kv, "arms", arms, sizeof(arms)))
+			if (kv.GetString("skin", skin, sizeof(skin))
+			&&  kv.GetString("arms", arms, sizeof(arms)))
 			{
 				strcopy(CTerrorSkin[CTSkins_Count], sizeof(CTerrorSkin[]), skin);
 				strcopy(CTerrorArms[CTSkins_Count], sizeof(CTerrorArms[]), arms);
@@ -366,7 +377,7 @@ PrepareConfig(const String:file[])
 				Format(skin_id, sizeof(skin_id), "%d", CTSkins_Count++);
 
 				// Add every section as a menu item
-				AddMenuItem(ct_skins_menu, skin_id, section);
+				ct_skins_menu.AddItem(skin_id, section);
 
 				PrecacheModel(skin, true);
 
@@ -377,49 +388,49 @@ PrepareConfig(const String:file[])
 			// Something is wrong
 			else LogError("Player model or arms for \"%s\" is incorrect!", section);
 		}
-		while (KvGotoNextKey(kv));
+		while (kv.GotoNextKey());
 	}
 	else SetFailState("Fatal error: Missing \"Counter-Terrorists\" section!");
 
-	KvRewind(kv);
+	kv.Rewind();
 
 	// Local handles must be freed
-	CloseHandle(kv);
+	delete kv;
 }
 
 /* PrepareMenus()
  *
  * Create menus if config is valid.
  * ------------------------------------------------------------------------------------------ */
-PrepareMenus()
+void PrepareMenus()
 {
 	// Firstly zero out amount of avalible skins
 	TSkins_Count = CTSkins_Count = 0;
 
 	// Then safely close menu handles
-	if (t_skins_menu != INVALID_HANDLE)
+	if (t_skins_menu != null)
 	{
-		CloseHandle(t_skins_menu);
-		t_skins_menu = INVALID_HANDLE;
+		delete t_skins_menu;
+		t_skins_menu = null;
 	}
-	if (ct_skins_menu != INVALID_HANDLE)
+	if (ct_skins_menu != null)
 	{
-		CloseHandle(ct_skins_menu);
-		ct_skins_menu = INVALID_HANDLE;
+		delete ct_skins_menu;
+		ct_skins_menu = null;
 	}
 
 	// Create specified menus depends on client teams
-	t_skins_menu  = CreateMenu(MenuHandler_ChooseSkin, MenuAction_Select);
-	ct_skins_menu = CreateMenu(MenuHandler_ChooseSkin, MenuAction_Select);
+	t_skins_menu  = new Menu(MenuHandler_ChooseSkin, MenuAction_Select);
+	ct_skins_menu = new Menu(MenuHandler_ChooseSkin, MenuAction_Select);
 
 	// And dont forget to set the menu's titles
-	SetMenuTitle(t_skins_menu,  "Choose your Terrorist skin:");
-	SetMenuTitle(ct_skins_menu, "Choose your Counter-Terrorist skin:");
+	t_skins_menu.SetTitle( "Choose your Terrorist skin:");
+	ct_skins_menu.SetTitle("Choose your Counter-Terrorist skin:");
 
-	if (GetConVarBool(sc_random))
+	if (sc_random.BoolValue)
 	{
-		AddMenuItem(t_skins_menu,  "Random", "Random");
-		AddMenuItem(ct_skins_menu, "Random", "Random");
+		t_skins_menu.AddItem( "Random", "Random");
+		ct_skins_menu.AddItem("Random", "Random");
 	}
 }
 
@@ -427,4 +438,7 @@ PrepareMenus()
  *
  * Checks if a client is valid.
  * ------------------------------------------------------------------------------------------ */
-bool:IsValidClient(client) return (1 <= client <= MaxClients && IsClientInGame(client)) ? true : false;
+bool IsValidClient(int client)
+{
+	return (1 <= client <= MaxClients && IsClientInGame(client));
+}
